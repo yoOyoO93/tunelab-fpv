@@ -1,0 +1,2 @@
+# Transmet l'en-tête Authorization à PHP
+SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
