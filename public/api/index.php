@@ -1,51 +1,21 @@
 <?php
 // Proxy IA TuneLab FPV pour hébergement PHP (o2switch / cPanel)
 // La clé API est lue dans un fichier HORS du dossier web (voir README, section o2switch).
+require __DIR__ . '/lib.php';
 
-header('Content-Type: application/json; charset=utf-8');
+$cfg = tl_bootstrap(['POST']);
+if (empty($cfg['ANTHROPIC_API_KEY'])) tl_error(500, 'ANTHROPIC_API_KEY absente de tunelab-secret.php.');
 
-$cfgPaths = [
-    dirname(__DIR__, 2) . '/tunelab-secret.php',   // ex : /home/<user>/tunelab-secret.php si la racine du site est /home/<user>/tune.domaine.fr
-    dirname(__DIR__, 3) . '/tunelab-secret.php',
-];
-$cfg = null;
-foreach ($cfgPaths as $p) { if (is_readable($p)) { $cfg = require $p; break; } }
-if (!$cfg || empty($cfg['ANTHROPIC_API_KEY'])) {
-    http_response_code(500);
-    echo json_encode(['error' => ['message' => 'Configuration serveur manquante (tunelab-secret.php).']]);
-    exit;
-}
+$in = tl_body(400 * 1024);
+if (empty($in['messages']) || !is_array($in['messages'])) tl_error(400, 'Requête invalide');
 
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-$allowed = $cfg['ALLOWED_ORIGIN'] ?? '';
-if ($allowed && $origin && $origin === $allowed) {
-    header('Access-Control-Allow-Origin: ' . $allowed);
-    header('Vary: Origin');
-}
-header('Access-Control-Allow-Methods: POST, OPTIONS');
-header('Access-Control-Allow-Headers: content-type, authorization, x-access-token');
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(204); exit; }
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); echo json_encode(['error' => ['message' => 'POST uniquement']]); exit; }
-
-// Jeton d'accès (Authorization: Bearer ... ou X-Access-Token)
-if (!empty($cfg['ACCESS_TOKEN'])) {
-    $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
-    $tok = $_SERVER['HTTP_X_ACCESS_TOKEN'] ?? (str_starts_with($auth, 'Bearer ') ? substr($auth, 7) : '');
-    if (!hash_equals($cfg['ACCESS_TOKEN'], (string)$tok)) {
-        http_response_code(401);
-        echo json_encode(['error' => ['message' => "Jeton d'accès invalide"]]);
-        exit;
-    }
-}
-
-$in = json_decode(file_get_contents('php://input'), true);
-if (!is_array($in) || empty($in['messages'])) { http_response_code(400); echo json_encode(['error' => ['message' => 'Requête invalide']]); exit; }
+$model = (string)($in['model'] ?? 'claude-sonnet-5-5');
+if (!preg_match('/^claude-[a-z0-9.-]{1,60}$/', $model)) tl_error(400, 'Modèle invalide');
 
 $payload = [
-    'model'      => $in['model'] ?? 'claude-sonnet-5-5',
-    'max_tokens' => min((int)($in['max_tokens'] ?? 2000), 4000),
-    'system'     => $in['system'] ?? '',
+    'model'      => $model,
+    'max_tokens' => max(1, min((int)($in['max_tokens'] ?? 2000), 4000)),
+    'system'     => is_string($in['system'] ?? null) ? $in['system'] : '',
     'messages'   => $in['messages'],
 ];
 
@@ -53,6 +23,7 @@ $ch = curl_init('https://api.anthropic.com/v1/messages');
 curl_setopt_array($ch, [
     CURLOPT_POST           => true,
     CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_CONNECTTIMEOUT => 15,
     CURLOPT_TIMEOUT        => 120,
     CURLOPT_HTTPHEADER     => [
         'content-type: application/json',
@@ -66,6 +37,6 @@ $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 $err = curl_error($ch);
 curl_close($ch);
 
-if ($res === false) { http_response_code(502); echo json_encode(['error' => ['message' => 'Appel API impossible : ' . $err]]); exit; }
+if ($res === false) tl_error(502, 'Appel API impossible : ' . $err);
 http_response_code($code ?: 502);
 echo $res;

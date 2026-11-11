@@ -166,7 +166,7 @@ export default function SimTab({ drone, mutDrone }) {
         >
           Créer un rate profile « SIM »
         </button>
-        {drone.rateProfiles.length >= MAX_RATE_PROFILES && <span className="muted small"> 6 slots déjà utilisés.</span>}
+        {drone.rateProfiles.length >= MAX_RATE_PROFILES && <span className="muted small"> Les {MAX_RATE_PROFILES} slots sont déjà utilisés.</span>}
       </Card>
     </div>
   );

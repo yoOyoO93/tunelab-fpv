@@ -1,2 +1,7 @@
 # Transmet l'en-tête Authorization à PHP
 SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+
+# lib.php n'est qu'une bibliothèque : pas d'accès direct
+<Files "lib.php">
+  Require all denied
+</Files>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { exportCli, droneFromCli } from '../lib/cli.js';
 import { download, slug } from '../lib/storage.js';
+import { snapshot } from '../lib/model.js';
 import { Card, copy } from './ui.jsx';
 
 export default function CliTab({ drone, mutDrone, addDrone }) {
@@ -29,12 +30,16 @@ export default function CliTab({ drone, mutDrone, addDrone }) {
       addDrone(d);
       setMsg(`Drone « ${d.name} » créé : ${d.pidProfiles.length} profil(s) PID, ${d.rateProfiles.length} rate profile(s), firmware ${d.firmware}.`);
     } else {
-      if (!confirm('Remplacer tous les profils PID et rates de ce drone ? (Une version de chaque profil actuel sera conservée dans son historique si le nom correspond.)')) return;
+      if (!confirm('Remplacer tous les profils PID et rates de ce drone ? (Chaque profil actuel est d\'abord sauvegardé dans l\'historique du slot correspondant.)')) return;
       mutDrone((cur) => {
-        cur.pidProfiles = d.pidProfiles.map((np, i) => ({ ...np, history: cur.pidProfiles[i]?.history || [] }));
-        cur.rateProfiles = d.rateProfiles.map((nr, i) => ({ ...nr, history: cur.rateProfiles[i]?.history || [] }));
-        cur.activePid = cur.pidProfiles[0].id;
-        cur.activeRate = cur.rateProfiles[0].id;
+        const keep = (old) => (old ? [...old.history, snapshot(old, `Avant import CLI (${old.name})`)] : []);
+        const aP = d.pidProfiles.findIndex((x) => x.id === d.activePid);
+        const aR = d.rateProfiles.findIndex((x) => x.id === d.activeRate);
+        // les profils au-delà de ce que contient le diff sont conservés tels quels
+        cur.pidProfiles = [...d.pidProfiles.map((np, i) => ({ ...np, history: keep(cur.pidProfiles[i]) })), ...cur.pidProfiles.slice(d.pidProfiles.length)];
+        cur.rateProfiles = [...d.rateProfiles.map((nr, i) => ({ ...nr, history: keep(cur.rateProfiles[i]) })), ...cur.rateProfiles.slice(d.rateProfiles.length)];
+        cur.activePid = cur.pidProfiles[Math.max(0, aP)].id;
+        cur.activeRate = cur.rateProfiles[Math.max(0, aR)].id;
         cur.global = { ...cur.global, ...d.global };
         if (parsed.version) cur.firmware = d.firmware;
       });

@@ -23,7 +23,7 @@ export default function PidTab({ drone, mutDrone }) {
     mutProf((p) => {
       for (const a of ['roll', 'pitch']) {
         const keys = term === 'all' ? ['p', 'i', 'dmax', 'dmin', 'f'] : term === 'pd' ? ['p', 'dmax', 'dmin'] : [term];
-        for (const k of keys) p.pids[a][k] = Math.max(0, Math.round(p.pids[a][k] * (1 + (sign * pct) / 100)));
+        for (const k of keys) p.pids[a][k] = Math.min(k === 'f' ? 1000 : 250, Math.max(0, Math.round(p.pids[a][k] * (1 + (sign * pct) / 100))));
       }
     });
 
@@ -46,7 +46,7 @@ export default function PidTab({ drone, mutDrone }) {
                   <th className={`axis ${a}`}>{AXIS_LABEL[a]}</th>
                   {TERMS.map((t) => (
                     <td key={t.k}>
-                      <Num value={prof.pids[a][t.k]} min={0} max={250} onChange={(v) => mutProf((p) => (p.pids[a][t.k] = Math.round(v)))} />
+                      <Num value={prof.pids[a][t.k]} min={0} max={t.k === 'f' ? 1000 : 250} onChange={(v) => mutProf((p) => (p.pids[a][t.k] = Math.round(v)))} />
                     </td>
                   ))}
                 </tr>

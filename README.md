@@ -6,12 +6,12 @@ Gestionnaire de rates et de PID pour drones FPV, avec historique des versions, e
 
 - **Hangar multi-drones** : fiche machine (châssis, moteurs, KV, batterie, hélices, poids, FC, ESC, firmware).
 - **4 profils PID par drone** (comme Betaflight 4.3+) : P, I, D max, D min, Feedforward par axe, ajustement rapide en %, paramètres CLI avancés (filtres D-term, TPA, anti-gravity, sliders simplifiés…).
-- **6 rate profiles par drone** : Betaflight, Actual, Quick, KISS, RaceFlight — courbes en direct, comparaison entre profils, conversion automatique entre systèmes en conservant la sensation, gaz (mid/expo/limite).
+- **4 rate profiles par drone** (comme Betaflight 4.3+) : Betaflight, Actual, Quick, KISS, RaceFlight — courbes en direct, comparaison entre profils, conversion automatique entre systèmes en conservant la sensation, gaz (mid/expo/limite).
 - **Historique** : sauvegarde de versions nommées par profil, restauration en un clic (l'état courant est sauvegardé avant).
 - **CLI Betaflight** : export prêt à coller (profil actif ou tous), import d'un `diff all` (crée un drone ou remplace les profils). Gère le format D min (4.3–4.5) et D max (2025.12+).
 - **Simulateurs** : Liftoff, VelociDrone, TRYP FPV, Uncrashed, DRL, FPV SkyDive — valeurs à saisir dans le simu avec l'écart de courbe, et import de rates d'un simu vers un drone.
 - **Assistant IA** (Claude) : diagnostic de symptômes, propositions chiffrées affichées en diff, application en un clic avec sauvegarde automatique de la version précédente.
-- **Sauvegarde** : automatique dans le navigateur + export/import JSON complet.
+- **Sauvegarde** : automatique dans le navigateur, synchronisation en ligne sur ton hébergement (multi-appareils, copies horaires côté serveur) et export/import JSON complet.
 
 ## Lancer en local
 
@@ -38,7 +38,7 @@ L'app est 100 % statique (dossier `dist/`). Trois options, de la plus simple à 
    git push -u origin main
    ```
 2. Sur GitHub : **Settings → Pages → Build and deployment → Source : GitHub Actions**.
-3. Le workflow `.github/workflows/deploy.yml` teste, build et publie à chaque push sur `main`.
+3. Ajoute un workflow GitHub Pages (le dépôt ne contient que celui d'o2switch) ou publie `dist/` à la main.
 4. L'app est en ligne sur `https://<ton-pseudo>.github.io/tunelab-fpv/`.
 
 Domaine perso (ex : `tune.famillegermany.fr`) : dans **Settings → Pages → Custom domain**, saisis le sous-domaine, puis chez ton registrar crée un enregistrement `CNAME tune → <ton-pseudo>.github.io`. Coche **Enforce HTTPS** une fois le certificat émis.
@@ -61,6 +61,19 @@ Le build contient déjà `api/index.php` (proxy IA en PHP) et un `.htaccess` (HT
    ```
 5. **Mise en ligne** : `npm run build`, puis envoie le **contenu** de `dist/` (y compris les fichiers cachés `.htaccess`) dans `/home/<user>/tune.famillegermany.fr/`.
 6. **Dans l'app** : Réglages → *Proxy serveur* → URL `./api/` (déjà pré-remplie) + le jeton `ACCESS_TOKEN`.
+
+`ACCESS_TOKEN` est **obligatoire** (12 caractères minimum) : sans lui le serveur refuse toute requête.
+
+#### Sauvegarde en ligne (multi-appareils)
+
+Le build contient aussi `api/sync.php`. Rien à installer de plus :
+
+1. Réglages → *Sauvegarde en ligne* → coche **Activer la synchronisation**, laisse l'URL `./api/sync.php`, saisis le même jeton `ACCESS_TOKEN`.
+2. Fais pareil sur chaque appareil (téléphone, PC). Le premier envoie ses données, les suivants les récupèrent.
+
+Fonctionnement : chaque modification est envoyée quelques secondes après ; à l'ouverture de l'app et au retour sur l'onglet, la dernière version est récupérée. L'app reste utilisable hors ligne, les changements partent au retour du réseau. Si deux appareils ont modifié chacun de leur côté, l'app te demande quelle version garder (l'autre est conservée : copie serveur ou copie de secours locale).
+
+Les données sont écrites dans `/home/<user>/tunelab-data/` (à côté de `tunelab-secret.php`, **hors** du dossier web ; modifiable avec `DATA_DIR`). Le serveur y garde jusqu'à 30 copies (une par heure au plus), restaurables depuis Réglages. La clé API Anthropic n'est jamais synchronisée.
 
 **Déploiement automatique depuis GitHub** : `.github/workflows/deploy-o2switch.yml` build et envoie `dist/` en FTPS. Crée un compte FTP limité au dossier du sous-domaine (cPanel → *Comptes FTP*), puis ajoute dans GitHub → *Settings → Secrets and variables → Actions* : `O2SWITCH_FTP_HOST` (le nom de ton serveur o2switch ou ton domaine), `O2SWITCH_FTP_USER`, `O2SWITCH_FTP_PASSWORD`. Lance-le depuis l'onglet *Actions*. Si le FTP refuse la connexion depuis GitHub, vérifie les restrictions d'accès dans cPanel ou repasse par l'envoi manuel.
 

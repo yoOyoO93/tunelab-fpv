@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { askAssistant, extractProposal, stripJson, QUICK_PROMPTS } from '../lib/ai.js';
-import { snapshot, uid } from '../lib/model.js';
+import { snapshot, uid, MAX_CHAT } from '../lib/model.js';
+import { safeKey, safeVal } from '../lib/cli.js';
 import { AXES, RATE_TYPES, stats } from '../lib/rates.js';
 import { Card } from './ui.jsx';
 
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const num = (v) => v !== '' && v !== null && typeof v !== 'boolean' && Number.isFinite(+v);
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 function md(text) {
   return esc(text)
@@ -61,7 +64,11 @@ export default function AiTab({ drone, mutDrone, settings, goSettings }) {
   const rate = drone.rateProfiles.find((p) => p.id === drone.activeRate);
   const ready = settings.apiMode === 'proxy' ? !!settings.proxyUrl : !!settings.apiKey;
 
-  useEffect(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), [chat.length, busy]);
+  // Accolades obligatoires : sur les Chrome récents scrollIntoView() renvoie une Promise,
+  // que React prendrait pour une fonction de nettoyage (plantage en quittant l'onglet).
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chat.length, busy]);
 
   const send = async (text) => {
     const content = (text ?? input).trim();
@@ -69,14 +76,20 @@ export default function AiTab({ drone, mutDrone, settings, goSettings }) {
     setErr('');
     setInput('');
     const userMsg = { id: uid(), role: 'user', content };
-    const history = [...chat, userMsg].slice(-16);
-    mutDrone((d) => (d.chat = [...(d.chat || []), userMsg]));
+    // L'API exige que la conversation commence par un message utilisateur :
+    // après la coupe aux 16 derniers, on retire une éventuelle réponse orpheline en tête.
+    let history = [...chat, userMsg].slice(-16);
+    while (history.length && history[0].role !== 'user') history = history.slice(1);
+    mutDrone((d) => (d.chat = [...(d.chat || []), userMsg].slice(-MAX_CHAT)));
     setBusy(true);
     try {
       const reply = await askAssistant(settings, drone, history);
-      mutDrone((d) => d.chat.push({ id: uid(), role: 'assistant', content: reply }));
+      mutDrone((d) => (d.chat = [...(d.chat || []), { id: uid(), role: 'assistant', content: reply }]));
     } catch (e) {
       setErr(e.message);
+      // la question n'est pas partie : on la retire du fil et on la remet dans le champ
+      mutDrone((d) => (d.chat = (d.chat || []).filter((m) => m.id !== userMsg.id)));
+      setInput((cur) => cur || content);
     } finally {
       setBusy(false);
     }
@@ -90,16 +103,20 @@ export default function AiTab({ drone, mutDrone, settings, goSettings }) {
         p.history.push(snapshot(p, 'Avant suggestion IA'));
         for (const a of AXES)
           for (const [k, v] of Object.entries(prop.pid?.[a] || {}))
-            if (k in p.pids[a] && !isNaN(+v)) p.pids[a][k] = Math.round(+v);
-        for (const [k, v] of Object.entries(prop.pidExtra || {})) p.extra[k] = String(v);
+            if (k in p.pids[a] && num(v)) p.pids[a][k] = clamp(Math.round(+v), 0, k === 'f' ? 1000 : 250);
+        for (const [k, v] of Object.entries(prop.pidExtra || {})) if (safeKey(k)) p.extra[k] = safeVal(v);
       }
       if (prop.rates || prop.throttle) {
         r.history.push(snapshot(r, 'Avant suggestion IA'));
         if (prop.rates?.type && RATE_TYPES[prop.rates.type]) r.type = prop.rates.type;
         for (const a of AXES)
           for (const [k, v] of Object.entries(prop.rates?.[a] || {}))
-            if (k in r.axes[a] && !isNaN(+v)) r.axes[a][k] = Math.round(+v);
-        for (const [k, v] of Object.entries(prop.throttle || {})) r.throttle[k] = isNaN(+v) ? v : +v;
+            if (k in r.axes[a] && num(v)) r.axes[a][k] = clamp(Math.round(+v), k === 'rc_rate' ? 1 : 0, k === 'expo' ? 100 : 255);
+        const t = prop.throttle || {};
+        if (num(t.thr_mid)) r.throttle.thr_mid = clamp(Math.round(+t.thr_mid), 0, 100);
+        if (num(t.thr_expo)) r.throttle.thr_expo = clamp(Math.round(+t.thr_expo), 0, 100);
+        if (['OFF', 'SCALE', 'CLIP'].includes(t.throttle_limit_type)) r.throttle.throttle_limit_type = t.throttle_limit_type;
+        if (num(t.throttle_limit_percent)) r.throttle.throttle_limit_percent = clamp(Math.round(+t.throttle_limit_percent), 25, 100);
       }
       const m = d.chat.find((x) => x.id === msgId);
       if (m) m.applied = true;
