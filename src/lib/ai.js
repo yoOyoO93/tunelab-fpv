@@ -82,11 +82,30 @@ export async function askAssistant(settings, drone, history) {
 export function extractProposal(text) {
   const m = text.match(/```json\s*([\s\S]*?)```/);
   if (!m) return null;
+  let j;
   try {
-    return JSON.parse(m[1]);
+    j = JSON.parse(m[1]);
   } catch {
     return null;
   }
+  // La réponse d'un modèle n'est pas garantie conforme : on ne garde que des objets simples,
+  // pour que ni l'aperçu ni l'application ne plantent sur une forme inattendue.
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+  if (!obj(j)) return null;
+  const axes = (v) => {
+    const o = obj(v);
+    if (!o) return null;
+    const out = {};
+    for (const a of ['roll', 'pitch', 'yaw']) if (obj(o[a])) out[a] = o[a];
+    return out;
+  };
+  const out = {};
+  if (typeof j.summary === 'string') out.summary = j.summary.slice(0, 200);
+  if (axes(j.pid)) out.pid = axes(j.pid);
+  if (obj(j.pidExtra)) out.pidExtra = j.pidExtra;
+  if (obj(j.rates)) out.rates = { ...axes(j.rates), ...(typeof j.rates.type === 'string' ? { type: j.rates.type.toUpperCase() } : {}) };
+  if (obj(j.throttle)) out.throttle = j.throttle;
+  return out.pid || out.pidExtra || out.rates || out.throttle ? out : null;
 }
 
 export const stripJson = (text) => text.replace(/```json[\s\S]*?```/g, '').trim();

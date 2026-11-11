@@ -1,7 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function Num({ value, onChange, step = 1, min, max, dec = 0, width }) {
   const [txt, setTxt] = useState(null);
+  // Si la valeur change sans que ce champ en soit l'origine (synchro, suggestion IA, restauration),
+  // on abandonne le texte en cours de saisie pour afficher la vraie valeur.
+  const emitted = useRef(null);
+  useEffect(() => {
+    if (emitted.current === null || Math.abs(+value - emitted.current) > 1e-9) setTxt(null);
+  }, [value]);
   const shown = txt ?? (value === undefined || value === null ? '' : String(+(+value).toFixed(dec)));
   return (
     <input
@@ -15,7 +21,13 @@ export function Num({ value, onChange, step = 1, min, max, dec = 0, width }) {
       value={shown}
       onChange={(e) => {
         setTxt(e.target.value);
-        if (e.target.value !== '' && !isNaN(+e.target.value)) onChange(+e.target.value);
+        if (e.target.value === '' || isNaN(+e.target.value)) return;
+        // borné : l'attribut min/max du champ n'empêche pas de taper une valeur hors plage
+        let n = +e.target.value;
+        if (max !== undefined) n = Math.min(max, n);
+        if (min !== undefined) n = Math.max(min, n);
+        emitted.current = n;
+        onChange(n);
       }}
       onBlur={() => setTxt(null)}
     />

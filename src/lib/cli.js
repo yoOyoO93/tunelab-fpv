@@ -1,11 +1,21 @@
 import { AXES } from './rates.js';
-import { dSchemeOf, newDrone, newPidProfile, newRateProfile, DEFAULT_PIDS, DEFAULT_RATES, GLOBAL_KEY_RE } from './model.js';
+import { dSchemeOf, newDrone, newPidProfile, newRateProfile, DEFAULT_PIDS, DEFAULT_RATES, BF_DEFAULT_RATE_AXIS, GLOBAL_KEY_RE, MAX_PID_PROFILES, MAX_RATE_PROFILES } from './model.js';
+
+// Une clé ou une valeur venant d'un import, d'une sauvegarde ou de l'IA ne doit jamais pouvoir
+// glisser une commande CLI supplémentaire (retour à la ligne, `#`, espace dans la clé...).
+const KEY_RE = /^[a-z0-9_]{1,64}$/i;
+export const safeKey = (k) => KEY_RE.test(String(k));
+export const safeVal = (v) => String(v ?? '').split(/[\r\n#]/)[0].trim().slice(0, 64); // première ligne seulement, sans commentaire
+const extraLines = (extra) =>
+  Object.entries(extra || {})
+    .filter(([k, v]) => safeKey(k) && safeVal(v) !== '')
+    .map(([k, v]) => `set ${k} = ${safeVal(v)}`);
 
 const cleanName = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9 _-]/g, '').slice(0, 8);
 
 export function pidProfileLines(p, scheme) {
   const L = [];
-  if (p.name) L.push(`set profile_name = ${cleanName(p.name)}`);
+  if (cleanName(p.name)) L.push(`set profile_name = ${cleanName(p.name)}`);
   for (const a of AXES) {
     const v = p.pids[a];
     L.push(`set p_${a} = ${v.p}`);
@@ -21,13 +31,13 @@ export function pidProfileLines(p, scheme) {
     }
     L.push(`set f_${a} = ${v.f}`);
   }
-  for (const [k, v] of Object.entries(p.extra || {})) if (k && v !== '') L.push(`set ${k} = ${v}`);
+  L.push(...extraLines(p.extra));
   return L;
 }
 
 export function rateProfileLines(r) {
   const L = [];
-  if (r.name) L.push(`set rateprofile_name = ${cleanName(r.name)}`);
+  if (cleanName(r.name)) L.push(`set rateprofile_name = ${cleanName(r.name)}`);
   L.push(`set rates_type = ${r.type}`);
   for (const a of AXES) L.push(`set ${a}_rc_rate = ${r.axes[a].rc_rate}`);
   for (const a of AXES) L.push(`set ${a}_expo = ${r.axes[a].expo}`);
@@ -35,9 +45,9 @@ export function rateProfileLines(r) {
   const t = r.throttle || {};
   if (t.thr_mid !== undefined) L.push(`set thr_mid = ${t.thr_mid}`);
   if (t.thr_expo !== undefined) L.push(`set thr_expo = ${t.thr_expo}`);
-  if (t.throttle_limit_type) L.push(`set throttle_limit_type = ${t.throttle_limit_type}`);
+  if (t.throttle_limit_type) L.push(`set throttle_limit_type = ${safeVal(t.throttle_limit_type)}`);
   if (t.throttle_limit_percent !== undefined) L.push(`set throttle_limit_percent = ${t.throttle_limit_percent}`);
-  for (const [k, v] of Object.entries(r.extra || {})) if (k && v !== '') L.push(`set ${k} = ${v}`);
+  L.push(...extraLines(r.extra));
   return L;
 }
 
@@ -51,11 +61,20 @@ export function exportCli(drone, { scope = 'active', includeGlobal = false } = {
   ];
   if (includeGlobal && Object.keys(drone.global || {}).length) {
     out.push('# Paramètres globaux (filtres)');
-    for (const [k, v] of Object.entries(drone.global)) out.push(`set ${k} = ${v}`);
+    out.push(...extraLines(drone.global));
     out.push('');
   }
-  const pids = drone.pidProfiles.map((p, i) => [p, i]).filter(([p]) => scope === 'all' || p.id === drone.activePid);
-  const rates = drone.rateProfiles.map((p, i) => [p, i]).filter(([p]) => scope === 'all' || p.id === drone.activeRate);
+  // Un FC n'a que 4 profils PID et 4 rate profiles : au-delà, `profile 4` échouerait
+  // et les `set` suivants écraseraient le profil précédent.
+  const inPid = (i) => i < MAX_PID_PROFILES;
+  const inRate = (i) => i < MAX_RATE_PROFILES;
+  const pids = drone.pidProfiles.map((p, i) => [p, i]).filter(([p, i]) => inPid(i) && (scope === 'all' || p.id === drone.activePid));
+  const rates = drone.rateProfiles.map((p, i) => [p, i]).filter(([p, i]) => inRate(i) && (scope === 'all' || p.id === drone.activeRate));
+  const skipped = [
+    ...drone.pidProfiles.filter((p, i) => !inPid(i)).map((p) => `PID « ${p.name} »`),
+    ...drone.rateProfiles.filter((p, i) => !inRate(i)).map((p) => `rates « ${p.name} »`),
+  ];
+  if (skipped.length) out.push(`# NON EXPORTÉ (au-delà des 4 slots du FC) : ${safeVal(skipped.join(', '))}`, '');
   for (const [p, i] of pids) {
     out.push(`# Profil PID ${i + 1} — ${p.name}`, `profile ${i}`, ...pidProfileLines(p, scheme), '');
   }
@@ -64,13 +83,13 @@ export function exportCli(drone, { scope = 'active', includeGlobal = false } = {
   }
   const activeP = drone.pidProfiles.findIndex((p) => p.id === drone.activePid);
   const activeR = drone.rateProfiles.findIndex((p) => p.id === drone.activeRate);
-  out.push(`profile ${Math.max(0, activeP)}`, `rateprofile ${Math.max(0, activeR)}`, 'save');
+  out.push(`profile ${inPid(activeP) ? Math.max(0, activeP) : 0}`, `rateprofile ${inRate(activeR) ? Math.max(0, activeR) : 0}`, 'save');
   return out.join('\n');
 }
 
 // --- Import d'un `diff all` / `dump` -----------------------------------------
 export function parseCli(text) {
-  const res = { version: null, craftName: '', pid: {}, rate: {}, global: {} };
+  const res = { version: null, craftName: '', pid: {}, rate: {}, global: {}, activePid: null, activeRate: null };
   let ctx = 'global';
   let idx = 0;
   for (let raw of text.split(/\r?\n/)) {
@@ -82,13 +101,18 @@ export function parseCli(text) {
     if (prof) {
       ctx = prof[1].toLowerCase() === 'profile' ? 'pid' : 'rate';
       idx = +prof[2];
+      // `diff all` se termine par « profile N » / « rateprofile N » : la dernière ligne
+      // non commentée de chaque type désigne donc le profil sélectionné sur le FC.
+      if (!line.startsWith('#')) res[ctx === 'pid' ? 'activePid' : 'activeRate'] = idx;
       res[ctx][idx] = res[ctx][idx] || {};
       continue;
     }
     if (line.startsWith('#')) continue;
     const m = line.match(/^set\s+(\S+)\s*=\s*(.*)$/i);
     if (!m) continue;
-    const [, k, v] = m;
+    const k = m[1];
+    const v = safeVal(m[2]);
+    if (!safeKey(k)) continue;
     if (k === 'craft_name' || k === 'name') res.craftName = v;
     if (ctx === 'global') {
       if (GLOBAL_KEY_RE.test(k)) res.global[k] = v;
@@ -139,7 +163,7 @@ export function rateFromSets(sets, i) {
   }
   const used = new Set(['rateprofile_name', 'rates_type', 'thr_mid', 'thr_expo', 'throttle_limit_type', 'throttle_limit_percent']);
   for (const a of AXES) {
-    const d = DEFAULT_RATES.axes[a];
+    const d = BF_DEFAULT_RATE_AXIS;
     r.axes[a] = {
       rc_rate: num(sets[`${a}_rc_rate`], d.rc_rate),
       srate: num(sets[`${a}_srate`], d.srate),
@@ -163,10 +187,12 @@ export function droneFromCli(text) {
   d.firmware = fwFromVersion(parsed.version);
   const pidIdx = Object.keys(parsed.pid).map(Number).sort((a, b) => a - b);
   const rateIdx = Object.keys(parsed.rate).map(Number).sort((a, b) => a - b);
-  if (pidIdx.length) d.pidProfiles = pidIdx.slice(0, 4).map((i) => pidFromSets(parsed.pid[i], i, d.firmware));
-  if (rateIdx.length) d.rateProfiles = rateIdx.slice(0, 6).map((i) => rateFromSets(parsed.rate[i], i));
-  d.activePid = d.pidProfiles[0].id;
-  d.activeRate = d.rateProfiles[0].id;
+  const keepPid = pidIdx.filter((i) => i < MAX_PID_PROFILES);
+  const keepRate = rateIdx.filter((i) => i < MAX_RATE_PROFILES);
+  if (keepPid.length) d.pidProfiles = keepPid.map((i) => pidFromSets(parsed.pid[i], i, d.firmware));
+  if (keepRate.length) d.rateProfiles = keepRate.map((i) => rateFromSets(parsed.rate[i], i));
+  d.activePid = d.pidProfiles[Math.max(0, keepPid.indexOf(parsed.activePid))].id;
+  d.activeRate = d.rateProfiles[Math.max(0, keepRate.indexOf(parsed.activeRate))].id;
   d.global = parsed.global;
   return { drone: d, parsed };
 }

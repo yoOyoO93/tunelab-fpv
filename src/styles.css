@@ -159,3 +159,11 @@ textarea.code { font-family: var(--mono); font-size: 12.5px; line-height: 1.5; }
   .pid-table th, .pid-table td { padding: 4px 3px; }
   .history .row { flex-wrap: wrap; }
 }
+
+/* État de la sauvegarde (pied du hangar) */
+.sync-state { display: flex; gap: 8px; align-items: flex-start; text-align: left; background: none; border: 0; padding: 8px 0 0; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.sync-state:hover { color: var(--text); }
+.sync-state .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: var(--line); }
+.sync-state.ok .dot, .sync-state.idle .dot { background: var(--accent); }
+.sync-state.syncing .dot { background: var(--accent); opacity: 0.5; }
+.sync-state.error .dot, .sync-state.conflict .dot { background: var(--danger); }
